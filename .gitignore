@@ -1,3 +1,6 @@
 card_art/
 .DS_Store
-Filled_Templates.pdf
+./Filled_Templates*
+archive
+split-pdf/node_modules/
+split-pdf/output/*
