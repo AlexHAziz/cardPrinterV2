@@ -4,3 +4,5 @@ card_art/
 archive
 split-pdf/node_modules/
 split-pdf/output/*
+build_mask_from_template.py
+Printer.zip

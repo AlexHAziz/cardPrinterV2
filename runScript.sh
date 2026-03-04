@@ -1,6 +1,6 @@
 python mtg_template_fill_masked.py \
   --template "./CARD_TEMPLATE_FOR_GPTv2.pdf" \
   --images "./card_art" \
-  --output "./Fronts_Masked1.pdf" \
-  --mask "./mask_2x3_0p1in_round.json" \
-  
+  --output "./fronts.pdf" \
+  --mask "./mask_2x3_small_border.json" \
+  --auto-rotate

@@ -148,6 +148,9 @@ def main():
         paths = list_images(args.images)
         if not paths:
             raise SystemExit(f"No images found in {args.images}")
+        for p in paths:
+            print(f"Found image: {p}")
+            Image.open(p).convert("RGBA")
         images = [Image.open(p).convert("RGBA") for p in paths]
 
     out = fitz.open()
