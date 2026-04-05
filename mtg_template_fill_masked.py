@@ -89,6 +89,89 @@ def cover_size(iw, ih, tw, th):
         rh = int(round(rw / src_ratio))
     return rw, rh
 
+
+def trim_bleed_border(img, dark_threshold=20, min_bleed_frac=0.03, keep_border_frac=0.015, max_asymmetry=3.0):
+    """
+    Detect and remove a bleeding edge border from a card image.
+
+    A real bleed border is nearly pure black on all four sides and reasonably
+    symmetric. This function only trims when:
+      - all 4 sides have a detectable dark border >= min_bleed_frac of dimension
+      - opposite sides are within max_asymmetry of each other in thickness
+
+    dark_threshold: max per-channel brightness to count as black (default 20)
+    min_bleed_frac: minimum border fraction on each side to trigger trimming (default 3%)
+    keep_border_frac: fraction of dimension to keep as border after trimming (default 1.5%)
+    max_asymmetry: max ratio between opposite sides before treating dark as art, not bleed (default 3x)
+    """
+    rgb = img.convert("RGB")
+    w, h = rgb.size
+
+    def is_black(x, y):
+        px = rgb.getpixel((x, y))
+        return max(px[0], px[1], px[2]) < dark_threshold
+
+    def scan_edge(edge, samples=10, max_scan_frac=0.12):
+        thicknesses = []
+        if edge in ('top', 'bottom'):
+            xs = [int(w * (i + 1) / (samples + 1)) for i in range(samples)]
+            max_d = int(h * max_scan_frac)
+            for x in xs:
+                count = 0
+                for d in range(max_d):
+                    y = d if edge == 'top' else h - 1 - d
+                    if is_black(x, y):
+                        count += 1
+                    else:
+                        break
+                thicknesses.append(count)
+        else:
+            ys = [int(h * (i + 1) / (samples + 1)) for i in range(samples)]
+            max_d = int(w * max_scan_frac)
+            for y in ys:
+                count = 0
+                for d in range(max_d):
+                    x = d if edge == 'left' else w - 1 - d
+                    if is_black(x, y):
+                        count += 1
+                    else:
+                        break
+                thicknesses.append(count)
+        thicknesses.sort()
+        return thicknesses[len(thicknesses) // 2]  # median
+
+    top    = scan_edge('top')
+    bottom = scan_edge('bottom')
+    left   = scan_edge('left')
+    right  = scan_edge('right')
+
+    min_bleed_px = int(min(w, h) * min_bleed_frac)
+
+    # All 4 sides must have a dark border — a real bleed forms a complete frame
+    if min(top, bottom, left, right) < min_bleed_px:
+        return img
+
+    # Opposite sides must be roughly symmetric — asymmetric dark means it's art content
+    if max(top, bottom) > max_asymmetry * min(top, bottom):
+        return img
+    if max(left, right) > max_asymmetry * min(left, right):
+        return img
+
+    keep_h = int(h * keep_border_frac)
+    keep_w = int(w * keep_border_frac)
+
+    crop_top    = max(0, top    - keep_h)
+    crop_bottom = max(0, bottom - keep_h)
+    crop_left   = max(0, left   - keep_w)
+    crop_right  = max(0, right  - keep_w)
+
+    if not any([crop_top, crop_bottom, crop_left, crop_right]):
+        return img
+
+    trimmed = img.crop((crop_left, crop_top, w - crop_right, h - crop_bottom))
+    print(f"  [trim-bleed] cropped edges: top={crop_top}px bottom={crop_bottom}px left={crop_left}px right={crop_right}px")
+    return trimmed
+
 def rounded_rect_mask(size_px, radius_px):
     w, h = size_px
     r = max(0, min(radius_px, min(w,h)//2))
@@ -128,6 +211,7 @@ def main():
     ap.add_argument("--mask", required=True, help="JSON with masks [{x,y,w,h,corner_radius_pt}]")
     ap.add_argument("--auto-rotate", action="store_true", help="Rotate 90° when it better matches slot")
     ap.add_argument("--rotate", type=int, choices=[0,90,180,270], default=0, help="Force rotation for all images")
+    ap.add_argument("--trim-bleed", action="store_true", help="Auto-detect and crop oversized bleed borders down to a normal black border")
     ap.add_argument("--dpi", type=int, default=DEFAULT_DPI, help="Rasterization DPI for masked images")
     args = ap.parse_args()
 
@@ -171,6 +255,9 @@ def main():
                 if i_idx >= len(images):
                     break
                 im = images[i_idx].copy()
+
+            if args.trim_bleed:
+                im = trim_bleed_border(im)
 
             if args.rotate in (90,180,270):
                 im = im.rotate(-args.rotate, expand=True)  # PIL is CCW; negative for CW
