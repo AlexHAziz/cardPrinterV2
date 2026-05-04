@@ -90,7 +90,7 @@ def cover_size(iw, ih, tw, th):
     return rw, rh
 
 
-def trim_bleed_border(img, dark_threshold=20, min_bleed_frac=0.03, keep_border_frac=0.015, max_asymmetry=3.0):
+def trim_bleed_border(img, dark_threshold=20, min_bleed_frac=0.03, keep_border_frac=0.04, max_asymmetry=3.0):
     """
     Detect and remove a bleeding edge border from a card image.
 
@@ -101,7 +101,7 @@ def trim_bleed_border(img, dark_threshold=20, min_bleed_frac=0.03, keep_border_f
 
     dark_threshold: max per-channel brightness to count as black (default 20)
     min_bleed_frac: minimum border fraction on each side to trigger trimming (default 3%)
-    keep_border_frac: fraction of dimension to keep as border after trimming (default 1.5%)
+    keep_border_frac: fraction of dimension to keep as border after trimming (default 3% ≈ 2mm on a standard card)
     max_asymmetry: max ratio between opposite sides before treating dark as art, not bleed (default 3x)
     """
     rgb = img.convert("RGB")
@@ -157,20 +157,55 @@ def trim_bleed_border(img, dark_threshold=20, min_bleed_frac=0.03, keep_border_f
     if max(left, right) > max_asymmetry * min(left, right):
         return img
 
-    keep_h = int(h * keep_border_frac)
-    keep_w = int(w * keep_border_frac)
+    # Use the minimum detected border across all 4 sides as the uniform crop basis —
+    # this ensures the same amount is removed from every edge, giving an even border all around.
+    min_border = min(top, bottom, left, right)
+    keep_px = int(min(w, h) * keep_border_frac)
+    uniform_crop = max(0, min_border - keep_px)
 
-    crop_top    = max(0, top    - keep_h)
-    crop_bottom = max(0, bottom - keep_h)
-    crop_left   = max(0, left   - keep_w)
-    crop_right  = max(0, right  - keep_w)
-
-    if not any([crop_top, crop_bottom, crop_left, crop_right]):
+    if uniform_crop == 0:
         return img
 
-    trimmed = img.crop((crop_left, crop_top, w - crop_right, h - crop_bottom))
-    print(f"  [trim-bleed] cropped edges: top={crop_top}px bottom={crop_bottom}px left={crop_left}px right={crop_right}px")
+    trimmed = img.crop((uniform_crop, uniform_crop, w - uniform_crop, h - uniform_crop))
+    print(f"  [trim-bleed] uniform crop={uniform_crop}px per side (detected borders: top={top} bottom={bottom} left={left} right={right})")
     return trimmed
+
+def fill_card_gutters(page, masks):
+    """
+    Paint solid black into every gap between adjacent mask slots.
+
+    Card images have rounded corners, which leaves a transparent bite at each
+    inner corner.  Without this fill the page-white background shows through at
+    those corners — visible as a white sliver on the top of right-column cards
+    and the bottom of left-column cards once cut and rotated to portrait.
+
+    The gutter rect is extended by corner_radius into the surrounding slot
+    border area to guarantee full coverage of the white corner region.
+    """
+    if len(masks) < 2:
+        return
+    r = max(float(m.get('corner_radius_pt', 0)) for m in masks)
+    n = len(masks)
+    for i in range(n):
+        mi = masks[i]
+        xi, yi, wi, hi = float(mi['x']), float(mi['y']), float(mi['w']), float(mi['h'])
+        for j in range(i + 1, n):
+            mj = masks[j]
+            xj, yj, wj, hj = float(mj['x']), float(mj['y']), float(mj['w']), float(mj['h'])
+            # Column gap: j is to the right of i with overlapping y ranges
+            y_overlap = (yi < yj + hj) and (yj < yi + hi)
+            if y_overlap and xj > xi + wi:
+                top  = min(yi, yj) - r
+                bot  = max(yi + hi, yj + hj) + r
+                page.draw_rect(fitz.Rect(xi + wi, top, xj, bot),
+                               color=None, fill=(0, 0, 0))
+            # Row gap: j is below i with overlapping x ranges
+            x_overlap = (xi < xj + wj) and (xj < xi + wi)
+            if x_overlap and yj > yi + hi:
+                left  = min(xi, xj) - r
+                right = max(xi + wi, xj + wj) + r
+                page.draw_rect(fitz.Rect(left, yi + hi, right, yj),
+                               color=None, fill=(0, 0, 0))
 
 def rounded_rect_mask(size_px, radius_px):
     w, h = size_px
@@ -243,6 +278,7 @@ def main():
     while True:
         page = out.new_page(width=pw, height=ph)
         page.show_pdf_page(page.rect, tpl_doc, 0)
+        fill_card_gutters(page, masks)
 
         filled_any = False
         for m in masks:
