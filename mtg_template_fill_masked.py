@@ -63,7 +63,8 @@ def load_masks(path):
     masks = data.get("masks", [])
     if not masks:
         raise SystemExit("No 'masks' in JSON.")
-    return masks
+    border_inset_pt = data.get("border_inset_in", 0.0) * PT_PER_IN
+    return masks, border_inset_pt
 
 def should_rotate_auto(iw, ih, sw_pt, sh_pt):
     # Decide if rotating 90 helps match slot orientation
@@ -207,6 +208,26 @@ def fill_card_gutters(page, masks):
                 page.draw_rect(fitz.Rect(left, yi + hi, right, yj),
                                color=None, fill=(0, 0, 0))
 
+def paint_card_slot_backgrounds(page, masks, border_inset_pt):
+    """
+    Paint solid black rectangles covering the full cut area of each card slot.
+
+    The PDF template's black region is often slightly smaller than the Cricut's
+    actual cut dimensions, leaving a thin white strip at the outer card edges
+    after cutting.  Drawing black here — from the mask position back out by the
+    border inset — ensures the black border extends all the way to the cut edge.
+
+    Called AFTER show_pdf_page (so it draws on top of the template) and BEFORE
+    the card images are placed.
+    """
+    for m in masks:
+        x = float(m['x']) - border_inset_pt
+        y = float(m['y']) - border_inset_pt
+        w = float(m['w']) + 2 * border_inset_pt
+        h = float(m['h']) + 2 * border_inset_pt
+        page.draw_rect(fitz.Rect(x, y, x + w, y + h),
+                       color=None, fill=(0, 0, 0))
+
 def rounded_rect_mask(size_px, radius_px):
     w, h = size_px
     r = max(0, min(radius_px, min(w,h)//2))
@@ -257,7 +278,7 @@ def main():
     page0 = tpl_doc[0]
     pw, ph = page0.rect.width, page0.rect.height
 
-    masks = load_masks(args.mask)
+    masks, border_inset_pt = load_masks(args.mask)
 
     # Prepare image list
     if args.single_image:
@@ -278,6 +299,10 @@ def main():
     while True:
         page = out.new_page(width=pw, height=ph)
         page.show_pdf_page(page.rect, tpl_doc, 0)
+        # Paint solid black at the full card slot area (mask + border) so the
+        # black border extends all the way to the Cricut cut edge.  Must happen
+        # after show_pdf_page (overlay on top) and before card images.
+        paint_card_slot_backgrounds(page, masks, border_inset_pt)
         fill_card_gutters(page, masks)
 
         filled_any = False
