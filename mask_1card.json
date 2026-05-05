@@ -1,0 +1,16 @@
+{
+    "units": "pt",
+    "border_inset_in": 0.03,
+    "corner_radius_in": 0.13,
+    "corner_radius_pt": 9.36,
+    "note": "Single card, centered on 8.5x11 page. Use with --single-image or 1 image in folder.",
+    "masks": [
+        {
+            "x": 182.16,
+            "y": 309.06,
+            "w": 247.68,
+            "h": 173.88,
+            "corner_radius_pt": 9.36
+        }
+    ]
+}
